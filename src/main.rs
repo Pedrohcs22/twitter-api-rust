@@ -1,17 +1,26 @@
+pub mod handlers;
+
 extern crate actix_web;
 
-use actix_web::{HttpServer, App, web, HttpRequest, HttpResponse};
-use mongodb::{Client, options::ClientOptions, options::FindOptions};
+use actix_web::{
+    error, middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer,
+};
+use mongodb::{Client, options::ClientOptions, options::FindOptions, Database};
 use bson::{doc, bson};
+use bytes::{Bytes, BytesMut};
+use futures::StreamExt;
+use json::JsonValue;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-// Here is the handler,
-// we are returning a json response with an ok status
-// that contains the text Hello World
-fn index(_req: HttpRequest) -> HttpResponse {
-    HttpResponse::Ok().json("Hello world!")
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Tweet {
+    uuid: String,
+    userId: String,
+    content: String
 }
 
-fn connectToDatabase() -> Result<(), mongodb::error::Error> {
+fn connectToDatabase() -> Result<Database, mongodb::error::Error> {
     // Parse a connection string into an options struct.
     let mut client_options =
         ClientOptions::parse("mongodb://localhost:27017")?;
@@ -68,30 +77,43 @@ fn connectToDatabase() -> Result<(), mongodb::error::Error> {
         }
     }
 
-    /*
-     List Databases
-     */
-    let db = client.database("mydb");
+    Ok(db)
+}
 
-    // List the names of the collections in that database.
-    for collection_name in db.list_collection_names(None)? {
-        println!("{}", collection_name);
-    }
+/// This handler uses json extractor
+fn create(item: web::Json<Tweet>) -> HttpResponse {
+    println!("model: {:?}", &item);
+    println!(" Creating new Tweet");
 
+    let generatedUuid = Uuid::new_v4();
 
-    Ok(())
+    // Get a handle to a collection in the database.
+    //let collection = db.collection("tweets");
+
+    let docs = vec![
+        doc! { "uuid": "generatedUuid" ,"userId": item.userId ,"content": item.content }
+    ];
+
+    // Insert some documents into the "mydb.tweets" collection.
+    //collection.insert_many(docs, None)?;
+
+    HttpResponse::Ok().json(item.0)
 }
 
 fn main() {
-    connectToDatabase().unwrap();
+    let db = connectToDatabase().unwrap();
 
-    // We are creating an Application instance and
-    // register the request handler with a route and a resource
-    // that creates a specific path, then the application instance
-    // can be used with HttpServer to listen for incoming connections.
-    HttpServer::new(|| App::new().service(
-        web::resource("/").route(web::get().to_async(index))))
-        .bind("127.0.0.1:8088")
-        .unwrap()
-        .run();
+    let sys = actix::System::new("mystore");
+
+    HttpServer::new(
+        || App::new()
+            .service(
+                web::resource("/rest/v1/tweet")
+                    .route(web::post().to(create))
+            ))
+        .bind("127.0.0.1:8088").unwrap()
+        .start();
+
+    println!("Started http server: 127.0.0.1:8088");
+    let _ = sys.run();
 }
